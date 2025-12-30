@@ -8,5 +8,5 @@ Mobile-first merchant onboarding flow with:
 - Success page with PDF download
 - Google Drive upload + WhatsApp notify + Monday.com item creation
 
-## Monorepo Structure
+
 
