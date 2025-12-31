@@ -1,16 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
-import * as pdfjsLib from "pdfjs-dist";
 import Modal from "../components/Modal";
-import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
 
 type StepKey = "upload" | "business" | "principal" | "additional";
 
-
-
+// const [hasSignature, setHasSignature] = useState(false);
 
 const STEPS: { key: StepKey; label: string }[] = [
   { key: "upload", label: "1) Upload" },
@@ -214,19 +213,28 @@ async function fileToDataUrlRaw(file: File | null): Promise<string | null> {
   });
 }
 
-function resizeSigCanvas(sigRef: React.RefObject<SignatureCanvas>) {
+function resizeSigCanvas(
+  sigRef: React.RefObject<SignatureCanvas>,
+  sigHasInkRef: React.MutableRefObject<boolean>,
+  opts?: { height?: number; force?: boolean }
+) {
   const sig = sigRef.current;
   if (!sig) return;
 
+  const force = !!opts?.force;
+
+  // ✅ HARD GUARD: if user has drawn ink, NEVER resize (unless forced)
+  if (!force && sigHasInkRef.current) return;
+
   const canvas = sig.getCanvas();
-  const wrapper = canvas.parentElement;
+  const wrapper = canvas.parentElement as HTMLElement | null;
   if (!wrapper) return;
 
   const ratio = Math.max(window.devicePixelRatio || 1, 1);
   const w = wrapper.clientWidth;
-  const h = 220;
+  const h = opts?.height ?? 220;
 
-  // preserve current drawing
+  // Preserve existing strokes (if any)
   const data = sig.toData();
 
   canvas.width = Math.floor(w * ratio);
@@ -238,8 +246,11 @@ function resizeSigCanvas(sigRef: React.RefObject<SignatureCanvas>) {
   if (ctx) ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
   sig.clear();
-  sig.fromData(data);
+  if (data && data.length) sig.fromData(data);
 }
+
+
+
 
 function prefillCountGet(): number {
   const v = sessionStorage.getItem("prefillCount");
@@ -256,6 +267,8 @@ export default function MerchantForm() {
   const [stepIndex, setStepIndex] = useState(0);
   const step = STEPS[stepIndex].key;
 
+  const [hasSignature, setHasSignature] = useState(false);
+
   const [form, setForm] = useState<FormState>(emptyForm);
 
   const [idFile, setIdFile] = useState<File | null>(null);
@@ -271,6 +284,9 @@ export default function MerchantForm() {
 
   const sigRef = useRef<SignatureCanvas | null>(null);
 
+  const sigHasInkRef = useRef(false);
+
+
   // modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTitle, setModalTitle] = useState("Notice");
@@ -282,23 +298,47 @@ export default function MerchantForm() {
     setModalOpen(true);
   }
 
-  // Signature resize
+ // Signature resize
   useEffect(() => {
-    const t = setTimeout(() => resizeSigCanvas(sigRef as any), 0);
-    const onResize = () => resizeSigCanvas(sigRef as any);
+    let resizeTimeout: number;
+    
+    const onResize = () => {
+      // Debounce resize events to avoid clearing during scroll
+      clearTimeout(resizeTimeout);
+      resizeTimeout = window.setTimeout(() => {
+        // Only resize if no signature exists yet
+        if (!sigHasInkRef.current) {
+          resizeSigCanvas(sigRef as any, sigHasInkRef);
+        }
+      }, 150);
+    };
+
+    // Only listen to window resize, not visualViewport (which fires on scroll)
     window.addEventListener("resize", onResize);
+
+    // Initial resize
+    const t = setTimeout(() => resizeSigCanvas(sigRef as any, sigHasInkRef), 0);
+
     return () => {
       clearTimeout(t);
+      clearTimeout(resizeTimeout);
       window.removeEventListener("resize", onResize);
     };
   }, []);
 
   useEffect(() => {
     if (step === "additional") {
-      const t = setTimeout(() => resizeSigCanvas(sigRef as any), 0);
+      // Only force resize when first entering the step
+      const t = setTimeout(() => {
+        if (!sigHasInkRef.current) {
+          resizeSigCanvas(sigRef as any, sigHasInkRef, { force: true });
+        }
+      }, 100);
       return () => clearTimeout(t);
     }
   }, [step]);
+
+
 
   const all3DocsPresent = useMemo(() => !!(idFile && checkFile && w9File), [idFile, checkFile, w9File]);
 
@@ -603,7 +643,7 @@ export default function MerchantForm() {
         <div className="logo-wrap">
           <img src="/logo.svg" alt="Halo" />
         </div>
-        <h1 className="h1">Merchant Application</h1>
+        <h1 className="h1">Merchant Application - bak</h1>
         <p className="sub">Upload all documents, optionally prefill (with consent), then submit.</p>
       </div>
 
@@ -1013,22 +1053,41 @@ export default function MerchantForm() {
             <div className="label">Signature (required)</div>
             <div className="sigBox">
               <SignatureCanvas
-                ref={sigRef as any}
+                ref={sigRef}
                 penColor="black"
                 backgroundColor="white"
+                onBegin={() => {
+                  // user started drawing
+                  sigHasInkRef.current = true;
+                }}
+                onEnd={() => {
+                  // user finished a stroke
+                  sigHasInkRef.current = true;
+                }}
                 canvasProps={{
-                  style: {
-                    width: "100%",
-                    height: "220px",
-                    borderRadius: "12px"
-                  }
+                  style: { width: "100%", height: "220px", borderRadius: "12px" }
                 }}
               />
+
+
+
+
             </div>
             <div className="btnRow" style={{ marginTop: 8 }}>
-              <button className="btn btnGhost" type="button" onClick={() => sigRef.current?.clear()}>
-                Clear Signature
-              </button>
+              <button
+              className="btn btnGhost"
+              type="button"
+              onClick={() => {
+                sigRef.current?.clear();
+                sigHasInkRef.current = false; // ✅ allow resize again
+                setTimeout(() => resizeSigCanvas(sigRef as any, sigHasInkRef, { force: true }), 0);
+              }}
+            >
+              Clear Signature
+            </button>
+
+
+
             </div>
           </div>
 

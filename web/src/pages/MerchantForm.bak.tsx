@@ -1,21 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
-import * as pdfjsLib from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.min?url";
+import Modal from "../components/Modal";
 
-// ✅ Vite-safe worker setup
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
-const STEPS = [
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
+
+type StepKey = "upload" | "business" | "principal" | "additional";
+
+// const [hasSignature, setHasSignature] = useState(false);
+
+const STEPS: { key: StepKey; label: string }[] = [
   { key: "upload", label: "1) Upload" },
   { key: "business", label: "2) Business" },
   { key: "principal", label: "3) Principal + Banking" },
   { key: "additional", label: "4) Additional + Sign" }
-] as const;
+];
 
-type StepKey = typeof STEPS[number]["key"];
-
-interface FormData {
+type FormState = {
   legalBusinessName: string;
   dbaName: string;
   businessEstablishedDate: string;
@@ -37,6 +40,7 @@ interface FormData {
   businessEmail: string;
   businessWebsite: string;
   fnsNumber: string;
+
   ownerLastName: string;
   ownerFirstName: string;
   ownerMiddleName: string;
@@ -55,26 +59,28 @@ interface FormData {
   idExp: string;
   contactEmail: string;
   contactPhone: string;
+
   bankName: string;
-  bankAddress: string;
-  bankContactName: string;
-  bankContactPhone: string;
-  accountNumber: string;
   routingNumber: string;
+  accountNumber: string;
+
+  // additional fields
   ccTerminal: string;
   encryption: string;
   gasStationPos: string;
-  installationDate: string;
   pricing: string;
-  otherfleetcards: string;
+  installationDate: string;
+  otherFleetCards: string;
+  siteId: string;
   otherNotes: string;
+
   signatureName: string;
   signatureDate: string;
   signatureImageDataUrl: string;
   termsAccepted: boolean;
-}
+};
 
-const emptyForm: FormData = {
+const emptyForm: FormState = {
   legalBusinessName: "",
   dbaName: "",
   businessEstablishedDate: "",
@@ -96,6 +102,7 @@ const emptyForm: FormData = {
   businessEmail: "",
   businessWebsite: "",
   fnsNumber: "",
+
   ownerLastName: "",
   ownerFirstName: "",
   ownerMiddleName: "",
@@ -114,26 +121,27 @@ const emptyForm: FormData = {
   idExp: "",
   contactEmail: "",
   contactPhone: "",
+
   bankName: "",
-  bankAddress: "",
-  bankContactName: "",
-  bankContactPhone: "",
-  accountNumber: "",
   routingNumber: "",
+  accountNumber: "",
+
   ccTerminal: "",
   encryption: "",
   gasStationPos: "",
-  installationDate: "",
   pricing: "",
-  otherfleetcards: "",
+  installationDate: "",
+  otherFleetCards: "",
+  siteId: "",
   otherNotes: "",
+
   signatureName: "",
   signatureDate: "",
   signatureImageDataUrl: "",
   termsAccepted: false
 };
 
-function normalizeISODate(s: string | null | undefined): string {
+function normalizeISODate(s: string) {
   if (!s) return "";
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const m = String(s).match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
@@ -141,11 +149,11 @@ function normalizeISODate(s: string | null | undefined): string {
   return `${m[3]}-${String(m[1]).padStart(2, "0")}-${String(m[2]).padStart(2, "0")}`;
 }
 
-function digitsOnly(s: string | number | null | undefined): string {
+function digitsOnly(s: string) {
   return String(s || "").replace(/\D/g, "");
 }
 
-function validLenDigits(s: string | number | null | undefined, len: number): boolean {
+function validLenDigits(s: string, len: number) {
   const d = digitsOnly(s);
   return d.length === len;
 }
@@ -153,31 +161,40 @@ function validLenDigits(s: string | number | null | undefined, len: number): boo
 async function fileToImageDataUrl(file: File | null): Promise<string | null> {
   if (!file) return null;
 
+  // If image, just read as data URL
   if (file.type.startsWith("image/")) {
     return await new Promise<string>((resolve, reject) => {
       const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
+      r.onload = () => resolve(String(r.result));
       r.onerror = reject;
       r.readAsDataURL(file);
     });
   }
 
+  // If PDF, render page 1 into a canvas
   if (file.type === "application/pdf") {
     const buf = await file.arrayBuffer();
+
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
     const page = await pdf.getPage(1);
+
     const viewport = page.getViewport({ scale: 1.6 });
 
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
 
-    // await page.render({ canvasContext: ctx, viewport }).promise;
-    // ✅ NEW (correct API)
-    await page.render({ canvas, viewport }).promise;
+    if (!ctx) return null;
+
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+
+    const renderTask = page.render({
+      canvas,               // ✅ v4 types want this
+      canvasContext: ctx,   // ✅ keep this too (works at runtime)
+      viewport
+    });
+
+    await renderTask.promise;
 
     return canvas.toDataURL("image/png");
   }
@@ -185,89 +202,151 @@ async function fileToImageDataUrl(file: File | null): Promise<string | null> {
   return null;
 }
 
+
 async function fileToDataUrlRaw(file: File | null): Promise<string | null> {
   if (!file) return null;
-  return await new Promise<string>((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const r = new FileReader();
-    r.onload = () => resolve(r.result as string);
+    r.onload = () => resolve(String(r.result));
     r.onerror = reject;
     r.readAsDataURL(file);
   });
 }
 
-function resizeSigCanvas(sigRef: React.RefObject<SignatureCanvas | null>): void {
-  const sig = sigRef && sigRef.current;
+function resizeSigCanvas(
+  sigRef: React.RefObject<SignatureCanvas>,
+  sigHasInkRef: React.MutableRefObject<boolean>,
+  opts?: { height?: number; force?: boolean }
+) {
+  const sig = sigRef.current;
   if (!sig) return;
 
+  const force = !!opts?.force;
+
+  // ✅ HARD GUARD: if user has drawn ink, NEVER resize (unless forced)
+  if (!force && sigHasInkRef.current) return;
+
   const canvas = sig.getCanvas();
-  if (!canvas) return;
+  const wrapper = canvas.parentElement as HTMLElement | null;
+  if (!wrapper) return;
 
   const ratio = Math.max(window.devicePixelRatio || 1, 1);
+  const w = wrapper.clientWidth;
+  const h = opts?.height ?? 220;
 
-  const parent = canvas.parentElement;
-  if (!parent) return;
+  // Preserve existing strokes (if any)
+  const data = sig.toData();
 
-  const rect = parent.getBoundingClientRect();
-  const width = Math.max(1, rect.width);
-  const height = 220;
-
-  sig.clear();
-
-  canvas.style.width = width + "px";
-  canvas.style.height = height + "px";
-
-  canvas.width = Math.floor(width * ratio);
-  canvas.height = Math.floor(height * ratio);
+  canvas.width = Math.floor(w * ratio);
+  canvas.height = Math.floor(h * ratio);
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
 
   const ctx = canvas.getContext("2d");
   if (ctx) ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+  sig.clear();
+  if (data && data.length) sig.fromData(data);
+}
+
+
+
+
+function prefillCountGet(): number {
+  const v = sessionStorage.getItem("prefillCount");
+  const n = Number(v || "0");
+  return Number.isFinite(n) ? n : 0;
+}
+function prefillCountInc(): number {
+  const next = prefillCountGet() + 1;
+  sessionStorage.setItem("prefillCount", String(next));
+  return next;
 }
 
 export default function MerchantForm() {
-  const [stepIndex, setStepIndex] = useState<number>(0);
+  const [stepIndex, setStepIndex] = useState(0);
   const step = STEPS[stepIndex].key;
 
-  const [form, setForm] = useState<FormData>(emptyForm);
+  const [hasSignature, setHasSignature] = useState(false);
+
+  const [form, setForm] = useState<FormState>(emptyForm);
 
   const [idFile, setIdFile] = useState<File | null>(null);
   const [checkFile, setCheckFile] = useState<File | null>(null);
   const [w9File, setW9File] = useState<File | null>(null);
 
-  const [consent, setConsent] = useState<boolean>(false);
-  const [busy, setBusy] = useState<boolean>(false);
-  const [status, setStatus] = useState<string>("");
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
 
-  const [showEIN, setShowEIN] = useState<boolean>(true);
-  const [showSSN, setShowSSN] = useState<boolean>(true);
+  const [showEIN, setShowEIN] = useState(true);
+  const [showSSN, setShowSSN] = useState(true);
 
   const sigRef = useRef<SignatureCanvas | null>(null);
 
-  useEffect(() => {
-    const t = setTimeout(() => resizeSigCanvas(sigRef), 0);
+  const sigHasInkRef = useRef(false);
 
-    const onResize = () => resizeSigCanvas(sigRef);
+
+  // modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalTitle, setModalTitle] = useState("Notice");
+  const [modalMsg, setModalMsg] = useState("");
+
+  function showModal(title: string, msg: string) {
+    setModalTitle(title);
+    setModalMsg(msg);
+    setModalOpen(true);
+  }
+
+ // Signature resize
+  useEffect(() => {
+    let resizeTimeout: number;
+    
+    const onResize = () => {
+      // Debounce resize events to avoid clearing during scroll
+      clearTimeout(resizeTimeout);
+      resizeTimeout = window.setTimeout(() => {
+        // Only resize if no signature exists yet
+        if (!sigHasInkRef.current) {
+          resizeSigCanvas(sigRef as any, sigHasInkRef);
+        }
+      }, 150);
+    };
+
+    // Only listen to window resize, not visualViewport (which fires on scroll)
     window.addEventListener("resize", onResize);
+
+    // Initial resize
+    const t = setTimeout(() => resizeSigCanvas(sigRef as any, sigHasInkRef), 0);
 
     return () => {
       clearTimeout(t);
+      clearTimeout(resizeTimeout);
       window.removeEventListener("resize", onResize);
     };
   }, []);
 
   useEffect(() => {
     if (step === "additional") {
-      const t = setTimeout(() => resizeSigCanvas(sigRef), 0);
+      // Only force resize when first entering the step
+      const t = setTimeout(() => {
+        if (!sigHasInkRef.current) {
+          resizeSigCanvas(sigRef as any, sigHasInkRef, { force: true });
+        }
+      }, 100);
       return () => clearTimeout(t);
     }
   }, [step]);
 
-  const hasAllDocs = useMemo(() => !!(idFile && checkFile && w9File), [idFile, checkFile, w9File]);
 
-  function setVal<K extends keyof FormData>(k: K, v: FormData[K]): void {
+
+  const all3DocsPresent = useMemo(() => !!(idFile && checkFile && w9File), [idFile, checkFile, w9File]);
+
+  function setVal<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((p) => ({ ...p, [k]: v }));
   }
 
-  function syncBizAddress(checked: boolean): void {
+  function syncBizAddress(checked: boolean) {
     setVal("businessSameAsPhysical", checked);
     if (checked) {
       setForm((p) => ({
@@ -282,19 +361,23 @@ export default function MerchantForm() {
   }
 
   async function handlePrefill() {
-    if (!idFile || !checkFile || !w9File) {
-      alert("All 3 documents are required (Photo ID + Check/Letter + W-9).");
-      return;
-    }
-
-    if (!consent) {
-      alert("Consent is not checked. OCR prefill is disabled. Please continue and fill manually.");
-      return;
-    }
-
     try {
+      if (!all3DocsPresent) {
+        showModal("Missing documents", "All 3 documents are required: Photo ID, Voided Check/Letter, and Form W-9.");
+        return;
+      }
+
+      // enforce 3-per-session only when consent true (actual OCR attempt)
+      if (consent) {
+        const cnt = prefillCountGet();
+        if (cnt >= 3) {
+          showModal("Prefill limit reached", "You can only click Prefill 3 times per session. Refresh the page to reset.");
+          return;
+        }
+      }
+
       setBusy(true);
-      setStatus("Scanning documents…");
+      setStatus(consent ? "Scanning documents…" : "Consent not checked — skipping OCR (no prefill).");
 
       const [idImg, checkImg, w9Img] = await Promise.all([
         fileToImageDataUrl(idFile),
@@ -302,9 +385,11 @@ export default function MerchantForm() {
         fileToImageDataUrl(w9File)
       ]);
 
-      if ((idFile && !idImg) || (checkFile && !checkImg) || (w9File && !w9Img)) {
-        throw new Error("Could not convert one of the uploaded PDFs/images for OCR. Try re-uploading as an image.");
+      if (!idImg || !checkImg || !w9Img) {
+        throw new Error("Could not convert one of the uploaded documents for OCR. Try uploading as an image.");
       }
+
+      if (consent) prefillCountInc();
 
       const resp = await fetch("/api/extract", {
         method: "POST",
@@ -346,6 +431,7 @@ export default function MerchantForm() {
           next.accountNumber = bank_fields.account_number || next.accountNumber;
         }
 
+        // W9: non-sensitive only
         if (w9_fields) {
           next.legalBusinessName = w9_fields.business_name || w9_fields.name || next.legalBusinessName;
           next.physicalStreet = w9_fields.address_line || next.physicalStreet;
@@ -365,19 +451,28 @@ export default function MerchantForm() {
         return next;
       });
 
-      setStatus("✅ Prefill complete. Continue to complete the application.");
-    } catch (e) {
+      setStatus(consent ? "✅ Prefill complete." : "✅ Skipped OCR (consent not checked).");
+      showModal("Prefill", consent ? "Prefill completed, Please click on 'Continue'." : "Consent was not checked, so OCR was skipped.");
+    } catch (e: any) {
       console.error(e);
       setStatus("❌ Prefill failed.");
-      alert((e as Error).message || "Prefill failed");
+      showModal("Prefill failed", e?.message || "Prefill failed");
     } finally {
       setBusy(false);
     }
   }
 
-  function validateStepOrAlert(): boolean {
+  function validateStepOrModal(): boolean {
+    if (step === "upload") {
+      if (!all3DocsPresent) {
+        showModal("Missing documents", "All 3 documents are required: Photo ID, Voided Check/Letter, and Form W-9.");
+        return false;
+      }
+      return true;
+    }
+
     if (step === "business") {
-      const required: (keyof FormData)[] = [
+      const required: (keyof FormState)[] = [
         "legalBusinessName",
         "dbaName",
         "businessEstablishedDate",
@@ -392,19 +487,23 @@ export default function MerchantForm() {
       ];
       for (const k of required) {
         if (!String(form[k] || "").trim()) {
-          alert(`Missing required: ${k}`);
+          showModal("Missing required", `Missing required: ${String(k)}`);
           return false;
         }
       }
       if (!validLenDigits(form.taxpayerId, 9)) {
-        alert("EIN must be 9 digits.");
+        showModal("Invalid EIN", "EIN must be 9 digits.");
+        return false;
+      }
+      if (form.businessPhone && !validLenDigits(form.businessPhone, 10)) {
+        showModal("Invalid phone", "Business phone must be 10 digits.");
         return false;
       }
       return true;
     }
 
     if (step === "principal") {
-      const required: (keyof FormData)[] = [
+      const required: (keyof FormState)[] = [
         "ownerFirstName",
         "ownerLastName",
         "ownerTitle",
@@ -426,20 +525,20 @@ export default function MerchantForm() {
       ];
       for (const k of required) {
         if (!String(form[k] || "").trim()) {
-          alert(`Missing required: ${k}`);
+          showModal("Missing required", `Missing required: ${String(k)}`);
           return false;
         }
       }
       if (!validLenDigits(form.ownerSsn, 9)) {
-        alert("SSN must be 9 digits.");
+        showModal("Invalid SSN", "SSN must be 9 digits.");
         return false;
       }
       if (form.contactPhone && !validLenDigits(form.contactPhone, 10)) {
-        alert("Cell phone must be 10 digits.");
+        showModal("Invalid phone", "Cell phone must be 10 digits.");
         return false;
       }
       if (form.ownerHomePhone && !validLenDigits(form.ownerHomePhone, 10)) {
-        alert("Home phone must be 10 digits.");
+        showModal("Invalid phone", "Home phone must be 10 digits.");
         return false;
       }
       return true;
@@ -447,20 +546,19 @@ export default function MerchantForm() {
 
     if (step === "additional") {
       if (!String(form.signatureName || "").trim()) {
-        alert("Signature name is required.");
+        showModal("Missing required", "Signer name is required.");
         return false;
       }
       if (!String(form.signatureDate || "").trim()) {
-        alert("Signature date is required.");
+        showModal("Missing required", "Signature date is required.");
         return false;
       }
       if (!form.termsAccepted) {
-        alert("You must accept Terms & Conditions.");
+        showModal("Terms required", "You must accept Terms & Conditions.");
         return false;
       }
-
       if (!sigRef.current || sigRef.current.isEmpty()) {
-        alert("Please sign in the signature box.");
+        showModal("Signature required", "Please sign in the signature box.");
         return false;
       }
       return true;
@@ -471,12 +569,16 @@ export default function MerchantForm() {
 
   async function handleSubmit() {
     try {
-      if (!validateStepOrAlert()) return;
+      if (!validateStepOrModal()) return;
+      if (!all3DocsPresent) {
+        showModal("Missing documents", "All 3 documents are required.");
+        return;
+      }
 
       setBusy(true);
       setStatus("Submitting…");
 
-      const signatureDataUrl = sigRef.current!.toDataURL("image/png");
+      const signatureDataUrl = sigRef.current?.toDataURL("image/png") || "";
       const finalForm = {
         ...form,
         signatureImageDataUrl: signatureDataUrl,
@@ -489,10 +591,11 @@ export default function MerchantForm() {
         fileToDataUrlRaw(w9File)
       ]);
 
-      const fileAttachments: Record<string, { filename: string; mimeType: string; dataUrl: string }> = {};
-      if (idFile && idRaw) fileAttachments.idFile = { filename: idFile.name, mimeType: idFile.type, dataUrl: idRaw };
-      if (checkFile && checkRaw) fileAttachments.checkFile = { filename: checkFile.name, mimeType: checkFile.type, dataUrl: checkRaw };
-      if (w9File && w9Raw) fileAttachments.w9File = { filename: w9File.name, mimeType: w9File.type, dataUrl: w9Raw };
+      const fileAttachments: any = {
+        idFile: { filename: idFile?.name, mimeType: idFile?.type, dataUrl: idRaw },
+        checkFile: { filename: checkFile?.name, mimeType: checkFile?.type, dataUrl: checkRaw },
+        w9File: { filename: w9File?.name, mimeType: w9File?.type, dataUrl: w9Raw }
+      };
 
       const resp = await fetch("/api/submit", {
         method: "POST",
@@ -503,20 +606,21 @@ export default function MerchantForm() {
       const json = await resp.json();
       if (!resp.ok || !json.success) throw new Error(json.error || "Submit failed");
 
-      window.location.href = `/success?appId=${encodeURIComponent(json.appId)}`;
-
       setStatus(`✅ Submitted. App ID: ${json.appId}`);
-    } catch (e) {
+
+      // redirect to success
+      window.location.assign(`/success?appId=${encodeURIComponent(json.appId)}`);
+    } catch (e: any) {
       console.error(e);
-      alert((e as Error).message || "Submit failed");
       setStatus("❌ Submit failed.");
+      showModal("Submit failed", e?.message || "Submit failed");
     } finally {
       setBusy(false);
     }
   }
 
   function next() {
-    if (step !== "upload" && !validateStepOrAlert()) return;
+    if (!validateStepOrModal()) return;
     setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
   }
 
@@ -526,44 +630,60 @@ export default function MerchantForm() {
 
   return (
     <div className="container">
+      <Modal open={modalOpen} title={modalTitle} onClose={() => setModalOpen(false)}>
+        <div style={{ lineHeight: 1.5 }}>{modalMsg}</div>
+        <div className="btnRow" style={{ marginTop: 14 }}>
+          <button className="btn btnPrimary" onClick={() => setModalOpen(false)}>
+            OK
+          </button>
+        </div>
+      </Modal>
+
       <div className="header">
         <div className="logo-wrap">
           <img src="/logo.svg" alt="Halo" />
         </div>
-        <h1 className="h1">Merchant Application - V12.26</h1>
-        <p className="sub">Upload documents, optionally prefill with OCR (with consent), then submit.</p>
+        <h1 className="h1">Merchant Application - bak</h1>
+        <p className="sub">Upload all documents, optionally prefill (with consent), then submit.</p>
       </div>
 
       <div className="stepper">
-        {STEPS.map((s, idx) => (
-          <div key={s.key} className={"pill " + (idx === stepIndex ? "pillActive" : "")}>
-            {s.label}
-          </div>
-        ))}
+        {STEPS.map((s, idx) => {
+          const clickable = idx <= stepIndex; // safe: only back/current
+          return (
+            <div
+              key={s.key}
+              className={"pill " + (idx === stepIndex ? "pillActive" : "") + (clickable ? " pillClickable" : "")}
+              onClick={() => clickable && setStepIndex(idx)}
+              role={clickable ? "button" : undefined}
+            >
+              {s.label}
+            </div>
+          );
+        })}
       </div>
 
-      
-
+      {/* STEP 1 */}
       {step === "upload" && (
         <div className="card">
-          <div className="cardTitle">1) Upload Documents</div>
+          <div className="cardTitle">1) Upload Documents (Required)</div>
 
           <div className="grid2">
             <div className="row">
-              <div className="label">Photo ID (image or PDF)</div>
+              <div className="label">Photo ID *</div>
               <input className="input" type="file" accept="image/*,.pdf" onChange={(e) => setIdFile(e.target.files?.[0] || null)} />
             </div>
 
             <div className="row">
-              <div className="label">Voided Check or Bank letter (image or PDF)</div>
+              <div className="label">Voided Check / Bank Letter *</div>
               <input className="input" type="file" accept="image/*,.pdf" onChange={(e) => setCheckFile(e.target.files?.[0] || null)} />
             </div>
 
             <div className="row">
-              <div className="label">W-9 (image or PDF)</div>
+              <div className="label">Form W-9 *</div>
               <input className="input" type="file" accept="image/*,.pdf" onChange={(e) => setW9File(e.target.files?.[0] || null)} />
               <div className="notice">
-                Download blank W-9 from IRS:{" "}
+                Download blank W-9:{" "}
                 <a href="https://www.irs.gov/pub/irs-pdf/fw9.pdf" target="_blank" rel="noreferrer">
                   fw9.pdf
                 </a>
@@ -572,53 +692,52 @@ export default function MerchantForm() {
 
             <div className="row">
               <label className="notice checkboxLine">
-                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> I consent to OCR prefill from uploaded documents
+                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> I consent to OCR prefill
               </label>
-              <div className="notice subtle">Note: We do not OCR SSN/EIN from W-9.</div>
+              <div className="notice subtle">
+                Prefill limit: <b>{Math.max(0, 3 - prefillCountGet())}</b> remaining this session.
+              </div>
+              <div className="notice subtle">Note: From W-9 SSN/EIN is not extracted.</div>
             </div>
           </div>
 
-          <div className="btnRow">
-            <button
-              className="btn btnPrimary"
-              disabled={busy || !hasAllDocs || !consent}
-              onClick={handlePrefill}
-            >
-              {busy ? "Scanning…" : "Prefill Application"}
-            </button>
-            <button
-              className="btn btnGhost"
-              disabled={busy || !hasAllDocs}
-              onClick={() => setStepIndex(1)}
-            >
-              Continue
-            </button>
-          </div>
+         <div className="btnRow">
+          <button
+            className="btn btnPrimary"
+            disabled={busy || !consent || !(idFile && checkFile && w9File)}
+            onClick={handlePrefill}
+            title={
+              !consent
+                ? "Check consent to enable OCR prefill"
+                : !(idFile && checkFile && w9File)
+                ? "Upload Photo ID, Voided Check/Letter, and W-9 to enable OCR prefill"
+                : ""
+            }
+          >
+            {busy ? "Working…" : "Prefill Application"}
+          </button>
 
-          {!hasAllDocs && (
-            <div className="notice" style={{ marginTop: 10 }}>
-              Upload all 3 documents (Photo ID + Voided Check/Letter + W-9) to continue.
-            </div>
-          )}
-          {hasAllDocs && !consent && (
-            <div className="notice subtle" style={{ marginTop: 10 }}>
-              Consent is optional. If unchecked, you can continue and fill manually (no OCR).
-            </div>
-          )}
+          <button className="btn btnGhost" disabled={busy} onClick={next}>
+            Continue
+          </button>
+        </div>
+
 
           {!!status && <div className="notice" style={{ marginTop: 10 }}>{status}</div>}
         </div>
       )}
 
+      {/* STEP 2 */}
       {step === "business" && (
         <div className="card">
           <div className="cardTitle">2) Business Information</div>
 
           <div className="grid2">
             <div className="row">
-              <div className="label">Legal Name of Business *</div>
+              <div className="label">Legal Business Name *</div>
               <input className="input" value={form.legalBusinessName} onChange={(e) => setVal("legalBusinessName", e.target.value)} />
             </div>
+
             <div className="row">
               <div className="label">DBA Name *</div>
               <input className="input" value={form.dbaName} onChange={(e) => setVal("dbaName", e.target.value)} />
@@ -644,17 +763,20 @@ export default function MerchantForm() {
                   {showEIN ? "Hide" : "Show"}
                 </button>
               </div>
-              <div className="notice subtle">Digits only. Validates 9 digits.</div>
             </div>
 
             <div className="row">
               <div className="label">Business Phone *</div>
-              <input className="input" inputMode="numeric" value={form.businessPhone} onChange={(e) => setVal("businessPhone", digitsOnly(e.target.value).slice(0, 10))} />
-              <div className="notice subtle">Digits only. (10 digits)</div>
+              <input
+                className="input"
+                inputMode="numeric"
+                value={form.businessPhone}
+                onChange={(e) => setVal("businessPhone", digitsOnly(e.target.value).slice(0, 10))}
+              />
             </div>
 
             <div className="row">
-              <div className="label">Type of Business *</div>
+              <div className="label">Business Type *</div>
               <select className="select" value={form.businessType} onChange={(e) => setVal("businessType", e.target.value)}>
                 <option value="">Select…</option>
                 <option value="restaurant">Restaurant</option>
@@ -704,7 +826,7 @@ export default function MerchantForm() {
             </label>
           </div>
 
-          <div className="sectionHeading">Business Address</div>
+          <div className="sectionHeading">Mailing Address</div>
           <div className="grid3">
             <div className="row">
               <div className="label">Street *</div>
@@ -746,6 +868,7 @@ export default function MerchantForm() {
         </div>
       )}
 
+      {/* STEP 3 */}
       {step === "principal" && (
         <div className="card">
           <div className="cardTitle">3) Principal + Banking</div>
@@ -763,7 +886,7 @@ export default function MerchantForm() {
 
             <div className="row">
               <div className="label">Owner Title *</div>
-              <input className="input" value={form.ownerTitle} onChange={(e) => setVal("ownerTitle", e.target.value)} placeholder="Owner / President" />
+              <input className="input" value={form.ownerTitle} onChange={(e) => setVal("ownerTitle", e.target.value)} />
             </div>
 
             <div className="row">
@@ -785,7 +908,6 @@ export default function MerchantForm() {
                   inputMode="numeric"
                   value={form.ownerSsn}
                   onChange={(e) => setVal("ownerSsn", digitsOnly(e.target.value).slice(0, 9))}
-                  placeholder="#########"
                 />
                 <button type="button" className="eyeBtn" onClick={() => setShowSSN((s) => !s)}>
                   {showSSN ? "Hide" : "Show"}
@@ -821,7 +943,7 @@ export default function MerchantForm() {
           <div className="sectionHeading">ID + Contact</div>
           <div className="grid2">
             <div className="row">
-              <div className="label">Driver's License # *</div>
+              <div className="label">Driver’s License # *</div>
               <input className="input" value={form.idNumber} onChange={(e) => setVal("idNumber", e.target.value)} />
             </div>
             <div className="row">
@@ -838,21 +960,11 @@ export default function MerchantForm() {
             </div>
             <div className="row">
               <div className="label">Cell Phone * (10 digits)</div>
-              <input
-                className="input"
-                inputMode="numeric"
-                value={form.contactPhone}
-                onChange={(e) => setVal("contactPhone", digitsOnly(e.target.value).slice(0, 10))}
-              />
+              <input className="input" inputMode="numeric" value={form.contactPhone} onChange={(e) => setVal("contactPhone", digitsOnly(e.target.value).slice(0, 10))} />
             </div>
             <div className="row">
               <div className="label">Home Phone (10 digits)</div>
-              <input
-                className="input"
-                inputMode="numeric"
-                value={form.ownerHomePhone}
-                onChange={(e) => setVal("ownerHomePhone", digitsOnly(e.target.value).slice(0, 10))}
-              />
+              <input className="input" inputMode="numeric" value={form.ownerHomePhone} onChange={(e) => setVal("ownerHomePhone", digitsOnly(e.target.value).slice(0, 10))} />
             </div>
           </div>
 
@@ -879,48 +991,54 @@ export default function MerchantForm() {
         </div>
       )}
 
+      {/* STEP 4 */}
       {step === "additional" && (
         <div className="card">
           <div className="cardTitle">4) Additional + Signature</div>
 
+          <div className="sectionHeading">Additional Information</div>
           <div className="grid2">
             <div className="row">
-              <div className="label">Terminal *</div>
+              <div className="label">Terminal</div>
               <input className="input" value={form.ccTerminal} onChange={(e) => setVal("ccTerminal", e.target.value)} />
             </div>
+
             <div className="row">
-              <div className="label">Encryption *</div>
+              <div className="label">Encryption</div>
               <select className="select" value={form.encryption} onChange={(e) => setVal("encryption", e.target.value)}>
                 <option value="">Select…</option>
-                <option value="wf350">WF 350 - Nashville</option>
-                <option value="wf351">WF 351 - Buypass </option>
-                <option value="other">Other </option>
-                <option value="na">N/A </option>
+                <option value="WF 350">WF 350</option>
+                <option value="WF 351">WF 351</option>
               </select>
             </div>
+
             <div className="row">
-              <div className="label">Gas Station POS *</div>
+              <div className="label">Gas Station POS</div>
               <select className="select" value={form.gasStationPos} onChange={(e) => setVal("gasStationPos", e.target.value)}>
                 <option value="">Select…</option>
-                <option value="PetroTechPos">PetroTech POS</option>
-                <option value="Ruby - Commander">Ruby - Commander </option>
-                <option value="Ruby- w/Micronode">Ruby - w/Micronode </option>
-                <option value="gilbarco">Gilbarco</option>
-                <option value="na">N/A</option>
-                <option value="other">Other</option>
+                <option value="petrotechPOS">petrotechPOS</option>
+                <option value="ruby">ruby</option>
               </select>
             </div>
+
             <div className="row">
-              <div className="label">PRICING *</div>
-              <input className="input" inputMode="text" value={form.pricing} onChange={(e) => setVal("pricing", e.target.value)} />
+              <div className="label">PRICING</div>
+              <input className="input" value={form.pricing} onChange={(e) => setVal("pricing", e.target.value)} />
             </div>
+
             <div className="row">
-              <div className="label">Installation Date *</div>
+              <div className="label">Installation Date</div>
               <input className="input" type="date" value={form.installationDate} onChange={(e) => setVal("installationDate", e.target.value)} />
             </div>
+
             <div className="row">
-              <div className="label">Other Fleet Cards *</div>
-              <input className="input" type="text" value={form.otherfleetcards} onChange={(e) => setVal("otherfleetcards", e.target.value)} />
+              <div className="label">Other Fleet Cards</div>
+              <input className="input" value={form.otherFleetCards} onChange={(e) => setVal("otherFleetCards", e.target.value)} />
+            </div>
+
+            <div className="row">
+              <div className="label">Site ID #</div>
+              <input className="input" value={form.siteId} onChange={(e) => setVal("siteId", e.target.value)} />
             </div>
           </div>
 
@@ -938,19 +1056,38 @@ export default function MerchantForm() {
                 ref={sigRef}
                 penColor="black"
                 backgroundColor="white"
+                onBegin={() => {
+                  // user started drawing
+                  sigHasInkRef.current = true;
+                }}
+                onEnd={() => {
+                  // user finished a stroke
+                  sigHasInkRef.current = true;
+                }}
                 canvasProps={{
-                  style: {
-                    width: "100%",
-                    height: "220px",
-                    borderRadius: "12px"
-                  }
+                  style: { width: "100%", height: "220px", borderRadius: "12px" }
                 }}
               />
+
+
+
+
             </div>
             <div className="btnRow" style={{ marginTop: 8 }}>
-              <button className="btn btnGhost" type="button" onClick={() => sigRef.current?.clear()}>
-                Clear Signature
-              </button>
+              <button
+              className="btn btnGhost"
+              type="button"
+              onClick={() => {
+                sigRef.current?.clear();
+                sigHasInkRef.current = false; // ✅ allow resize again
+                setTimeout(() => resizeSigCanvas(sigRef as any, sigHasInkRef, { force: true }), 0);
+              }}
+            >
+              Clear Signature
+            </button>
+
+
+
             </div>
           </div>
 
@@ -967,7 +1104,7 @@ export default function MerchantForm() {
 
           <div className="row">
             <label className="notice checkboxLine">
-              <input type="checkbox" checked={form.termsAccepted} onChange={(e) => setVal("termsAccepted", e.target.checked)} /> By submitting, you agree to all Terms & Conditions *
+              <input type="checkbox" checked={form.termsAccepted} onChange={(e) => setVal("termsAccepted", e.target.checked)} /> I agree to Terms & Conditions *
             </label>
           </div>
 
