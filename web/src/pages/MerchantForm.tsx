@@ -1011,6 +1011,17 @@ export default function MerchantForm() {
 
           <div className="sectionHeading">Signature & Terms</div>
 
+	 <div className="grid2">
+            <div className="row">
+              <div className="label">Signer Name *</div>
+              <input className="input" value={form.signatureName} onChange={(e) => setVal("signatureName", e.target.value)} />
+            </div>
+            <div className="row">
+              <div className="label">Signature Date *</div>
+              <input className="input" type="date" value={form.signatureDate} onChange={(e) => setVal("signatureDate", e.target.value)} />
+            </div>
+          </div>
+
           <div className="row">
             <div className="label">Signature (required)</div>
             <div className="sigBox">
@@ -1034,16 +1045,7 @@ export default function MerchantForm() {
             </div>
           </div>
 
-          <div className="grid2">
-            <div className="row">
-              <div className="label">Signer Name *</div>
-              <input className="input" value={form.signatureName} onChange={(e) => setVal("signatureName", e.target.value)} />
-            </div>
-            <div className="row">
-              <div className="label">Signature Date *</div>
-              <input className="input" type="date" value={form.signatureDate} onChange={(e) => setVal("signatureDate", e.target.value)} />
-            </div>
-          </div>
+          
 
           <div className="row">
             <label className="notice checkboxLine">

@@ -16,6 +16,32 @@
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
   --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  --control-h: 44px;
+  --control-px: 14px;
+  --control-fs: 16px;
+  --control-radius: 12px;
+}
+
+
+/* date inputs are special on mobile */
+.input[type="date"] {
+  height: var(--control-h);
+  line-height: calc(var(--control-h) - 2px);
+  padding: 0 var(--control-px);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* iOS: align date inner text */
+.input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
+  line-height: calc(var(--control-h) - 2px);
+}
+
+/* iOS: reduce weird extra padding / icons shifting */
+.input[type="date"]::-webkit-inner-spin-button,
+.input[type="date"]::-webkit-clear-button {
+  display: none;
 }
 
 * {
