@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
-import * as pdfjsLib from "pdfjs-dist";
 import Modal from "../components/Modal";
-import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
 
 
 type StepKey = "upload" | "business" | "principal" | "additional";

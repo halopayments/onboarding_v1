@@ -32,6 +32,9 @@ type Submission = {
 };
 
 const app = express();
+const distPath = path.resolve("/var/www/onboarding_v1/web/dist");
+app.use(express.static(distPath));
+
 app.set("trust proxy", 1);
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
