@@ -149,7 +149,7 @@ function drawSignatureSection(doc: any, formData: any): void {
   const pageW = doc.page.width;
   const sigBoxX = mL - 4;
   const sigBoxY = doc.y + 8;
-  const sigBoxW = pageW - mL - mR + 8;
+  const sigBoxW = pageW - mL - mR + 10;
   const sigBoxH = 140;
 
   doc.save().roundedRect(sigBoxX, sigBoxY, sigBoxW, sigBoxH, 10).fill(colors.background).restore();
@@ -180,7 +180,8 @@ function drawSignatureSection(doc: any, formData: any): void {
   doc.font("Helvetica-Bold").fontSize(11).fillColor(colors.darkGray).text(safeText(formData.signatureName) || "—", col1X, detailY + 14);
 
   doc.font("Helvetica").fontSize(9).fillColor(colors.mediumGray).text("Date Signed", col2X, detailY);
-  doc.font("Helvetica-Bold").fontSize(11).fillColor(colors.darkGray).text(safeText(formData.signatureDate) || "—", col2X, detailY + 14);
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(colors.darkGray).text(formatDate(formData.signatureDate) || "—", col2X, detailY + 14);
+
 
   doc.y = detailY + 40;
 }
@@ -220,6 +221,21 @@ async function dataUrlToPdfBuffer(dataUrl: string, mimeType = ""): Promise<Buffe
   return Buffer.from(out);
 }
 
+function formatDate(dateString: string): string {
+  if (!dateString) return "N/A";
+  
+  try {
+    const date = new Date(dateString);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const year = date.getFullYear();
+    
+    return `${month}/${day}/${year}`;
+  } catch {
+    return dateString || "N/A";
+  }
+}
+
 function generateApplicationPdfBuffer(formData: any, appId: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFKitDocument({ size: "LETTER", margin: 50, bufferPages: true, autoFirstPage: true });
@@ -230,17 +246,34 @@ function generateApplicationPdfBuffer(formData: any, appId: string): Promise<Buf
 
     drawModernHeader(doc, appId);
 
+function formatEIN(ein: string): string {
+  const digits = digitsOnly(ein);
+  if (digits.length === 9) {
+    return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+  }
+  return ein || "N/A";
+}
+
+function formatRevenue(revenue: string): string {
+  const digits = digitsOnly(revenue);
+  if (!digits) return "N/A";
+  
+  const num = parseInt(digits, 10);
+  return `$${num.toLocaleString('en-US')}`;
+}
+
     drawModernSection(doc, "Business Information");
     drawInfoCard(doc, [
       ["Legal Business Name", safeText(formData.legalBusinessName)],
       ["DBA Name", safeText(formData.dbaName)],
-      ["Date Established", safeText(formData.businessEstablishedDate)],
-      ["Taxpayer ID (EIN)", safeText(formData.taxpayerId)],
+      ["Date Established", formatDate(formData.businessEstablishedDate)],
+      ["Taxpayer ID (EIN)", formatEIN(formData.taxpayerId)],
+      ["FNS NO", safeText(formData.fnsNumber)],
+      ["Annual Revenue(approx)", formatRevenue(formData.annualRevenue)],
       ["Business Phone", safeText(formData.businessPhone)],
       ["Business Email", safeText(formData.businessEmail)],
       ["Business Website", safeText(formData.businessWebsite)],
-      ["FNS Number", safeText(formData.fnsNumber)]
-    ]);
+      ]);
 
     drawModernSection(doc, "Physical Location");
     drawInfoCard(doc, [
@@ -265,8 +298,7 @@ function generateApplicationPdfBuffer(formData: any, appId: string): Promise<Buf
       ["Full Name", `${safeText(formData.ownerFirstName)} ${safeText(formData.ownerLastName)}`.trim()],
       ["Title", safeText(formData.ownerTitle)],
       ["Ownership Percentage", safeText(formData.ownerOwnershipPct) ? `${safeText(formData.ownerOwnershipPct)}%` : "—"],
-      ["Date of Birth", safeText(formData.dob)],
-      // ["Social Security Number", formData.ownerSsn ? maskSSN(formData.ownerSsn) : "—"],
+      ["Date of Birth", formatDate(formData.dob)],
       ["Social Security Number", safeText(formData.ownerSsn)],
       ["Email Address", safeText(formData.contactEmail)],
       ["Cell Phone", safeText(formData.contactPhone)],
@@ -286,24 +318,24 @@ function generateApplicationPdfBuffer(formData: any, appId: string): Promise<Buf
     drawInfoCard(doc, [
       ["License Number", safeText(formData.idNumber)],
       ["Issuing State", safeText(formData.dlState)],
-      ["Expiration Date", safeText(formData.idExp)]
+      ["Expiration Date", formatDate(formData.idExp)]
     ]);
 
     drawModernSection(doc, "Banking Information");
     drawInfoCard(doc, [
       ["Bank Name", safeText(formData.bankName)],
       ["Routing Number", safeText(formData.routingNumber)],
-      ["Account Number", formData.accountNumber ? maskAcct(formData.accountNumber) : "—"]
+      ["Account Number", safeText(formData.accountNumber)]
     ]);
 
     drawModernSection(doc, "Additional Information");
     drawInfoCard(doc, [
-      ["Terminal", safeText(formData.ccTerminal)],
-      ["Encryption", safeText(formData.encryption)],
-      ["Gas Station POS", safeText(formData.gasStationPos)],
-      ["PRICING", safeText(formData.pricing)],
-      ["Installation Date", safeText(formData.installationDate)],
-      ["OTHER FLEET CARDS", safeText(formData.otherFleetCards || formData.otherfleetcards)],
+      // ["Terminal", safeText(formData.ccTerminal)],
+      // ["Encryption", safeText(formData.encryption)],
+      // ["Gas Station POS", safeText(formData.gasStationPos)],
+      // ["PRICING", safeText(formData.pricing)],
+      // ["Installation Date", safeText(formData.installationDate)],
+      // ["OTHER FLEET CARDS", safeText(formData.otherFleetCards || formData.otherfleetcards)],
       ["Other Notes", safeText(formData.otherNotes)]
     ]);
 

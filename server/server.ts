@@ -3,7 +3,8 @@ import express, { Request, Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
-import path from "path";
+import * as fs from 'fs';
+import path from 'path';
 import nodemailer from "nodemailer";
 import OpenAI from "openai";
 
@@ -37,6 +38,17 @@ app.use(express.static(distPath));
 
 app.set("trust proxy", 1);
 
+// // Add this test endpoint in your server.ts
+// app.get('/test-counter', (req, res) => {
+//   const appId = makeAppId();
+//   res.json({ 
+//     message: 'Counter test',
+//     appId: appId,
+//     currentCounters: Object.fromEntries(countersByDate)
+//   });
+// });
+
+
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: "35mb" }));
@@ -64,7 +76,34 @@ function nowISO(): string {
   return new Date().toISOString();
 }
 
-const countersByDate = new Map<string, number>();
+// Add at the top of server.ts (after imports)
+const COUNTER_FILE = path.join(__dirname, 'app-counters.json');
+
+// Load counters from file on startup
+function loadCounters(): Map<string, number> {
+  try {
+    if (fs.existsSync(COUNTER_FILE)) {
+      const data = fs.readFileSync(COUNTER_FILE, 'utf-8');
+      const obj = JSON.parse(data);
+      return new Map(Object.entries(obj));
+    }
+  } catch (err) {
+    console.error('Error loading counters:', err);
+  }
+  return new Map<string, number>();
+}
+
+// Save counters to file
+function saveCounters(counters: Map<string, number>): void {
+  try {
+    const obj = Object.fromEntries(counters);
+    fs.writeFileSync(COUNTER_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error saving counters:', err);
+  }
+}
+
+const countersByDate = loadCounters(); // ← Replaces your old Map
 
 function makeAppId(): string {
   const d = new Date();
@@ -73,9 +112,12 @@ function makeAppId(): string {
 
   const next = (countersByDate.get(base) || 0) + 1;
   countersByDate.set(base, next);
+  
+  saveCounters(countersByDate); // ← Add this line
 
   return `${base}-${String(next).padStart(4, "0")}`;
 }
+
 
 
 function sanitizeFilePart(s: string): string {
@@ -91,16 +133,36 @@ function buildPdfFileName(formData: any, appId: string): string {
   return `${dba}_halo_${appId}.pdf`;
 }
 
+// function buildMailer() {
+//   const host = process.env.SMTP_HOST || "smtp-relay.gmail.com";
+//   const port = Number(process.env.SMTP_PORT || 587);
+//   return nodemailer.createTransport({
+//     host,
+//     port,
+//     secure: false,
+//     requireTLS: true
+//   });
+// }
+
 function buildMailer() {
   const host = process.env.SMTP_HOST || "smtp-relay.gmail.com";
   const port = Number(process.env.SMTP_PORT || 587);
+
   return nodemailer.createTransport({
     host,
     port,
-    secure: false,
-    requireTLS: true
+    secure: false,            // correct for 587
+    requireTLS: true,
+
+    // 👇 IMPORTANT: this becomes the EHLO/HELO name
+    name: process.env.SMTP_EHLO_NAME || "mailer.yourdomain.com",
+
+    tls: {
+      servername: host,       // helps with TLS/SNI
+    },
   });
 }
+
 
 function normalizeISODate(val: string): string {
   if (!val) return "";
@@ -391,11 +453,16 @@ app.post("/api/submit", async (req: Request, res: Response) => {
           to: merchantEmail,
           subject: `We received your application (${appId})`,
           text:
+            'Dear Merchant,\n\n'+
             `Thank you for submitting your application. We will get back to you shortly.\n\n` +
             `App ID: ${appId}\n` +
             `Created: ${createdAtISO}\n` +
             `Business: ${businessName}\n` +
-            `Owner: ${ownerName}\n`
+            `Owner: ${ownerName}\n\n` +
+            'For any questions regarding your application, please reach out to onboarding@halopayments.com \n\n\n' +
+            'Best Regards,\n'+
+            'Onboarding Team\n'+
+            'Halo Payments.\n'
         });
 
         console.log("[email][merchant] sent", {

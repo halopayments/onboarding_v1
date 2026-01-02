@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from "react-router-dom";
-import MerchantForm from "./pages/MerchantForm_signtest";
+import MerchantForm from "./pages/MerchantForm";
 import Success from "./pages/success";
 import ScrollToTop from "./components/ScrollToTop";
 
