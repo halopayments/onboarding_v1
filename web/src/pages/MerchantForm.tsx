@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import SignatureCanvas from "react-signature-canvas";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "../components/Modal";
+import SignaturePad, { SignaturePadRef } from "../components/SignaturePad";
+
 
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
@@ -18,11 +19,90 @@ const STEPS: { key: StepKey; label: string }[] = [
   { key: "additional", label: "4) Additional + Sign" }
 ];
 
+const FIELD_LABELS: Record<string, string> = {
+  // Step 2 - Business Information
+  legalBusinessName: "Legal Business Name",
+  dbaName: "DBA Name",
+  businessEstablishedDate: "Date Established",
+  taxpayerId: "Taxpayer ID (EIN)",
+  fnsNumber: "FNS Number",
+  annualRevenue: "Annual Revenue",
+  businessPhone: "Business Phone",
+  businessType: "Business Type",
+  businessTypeOther: "Business Type Description",
+  
+  // Physical Address
+  physicalStreet: "Physical Street",
+  physicalUnit: "Physical Unit",
+  physicalCity: "Physical City",
+  physicalState: "Physical State",
+  physicalZip: "Physical ZIP",
+  
+  // Mailing Address
+  businessStreet: "Mailing Street",
+  businessUnit: "Mailing Unit",
+  businessCity: "Mailing City",
+  businessState: "Mailing State",
+  businessZip: "Mailing ZIP",
+  businessEmail: "Business Email",
+  businessWebsite: "Website",
+  
+  // Step 3 - Principal
+  ownerFirstName: "First Name",
+  ownerLastName: "Last Name",
+  ownerMiddleName: "Middle Name",
+  ownerTitle: "Owner Title",
+  ownerOwnershipPct: "Ownership %",
+  dob: "Date of Birth",
+  ownerSsn: "SSN",
+  ownerHomePhone: "Home Phone",
+  
+  // Principal Address
+  principalAddressStreet: "Principal Street",
+  principalAddressUnit: "Principal Unit",
+  principalAddressCity: "Principal City",
+  principalAddressState: "Principal State",
+  principalAddressZip: "Principal ZIP",
+  
+  // ID + Contact
+  idNumber: "Driver's License Number",
+  dlState: "State Issued",
+  idExp: "ID Expiration",
+  contactEmail: "Owner Email",
+  contactPhone: "Cell Phone",
+  
+  // Banking
+  bankName: "Bank Name",
+  routingNumber: "Routing Number",
+  accountNumber: "Account Number",
+  
+  // Step 4 - Additional
+  ccTerminal: "Terminal",
+  encryption: "Encryption",
+  gasStationPos: "Gas Station POS",
+  pricing: "Pricing",
+  installationDate: "Installation Date",
+  otherFleetCards: "Other Fleet Cards",
+  siteId: "Site ID",
+  otherNotes: "Other Notes",
+  
+  // Signature
+  signatureName: "Signer Name",
+  signatureDate: "Signature Date",
+  termsAccepted: "Terms & Conditions",
+  
+  // Other
+  businessSameAsPhysical: "Business address same as physical"
+};
+
+
 type FormState = {
   legalBusinessName: string;
   dbaName: string;
   businessEstablishedDate: string;
   taxpayerId: string;
+  fnsNumber: string;
+  annualRevenue: string;
   businessPhone: string;
   businessType: string;
   businessTypeOther: string;
@@ -39,7 +119,7 @@ type FormState = {
   businessZip: string;
   businessEmail: string;
   businessWebsite: string;
-  fnsNumber: string;
+  
 
   ownerLastName: string;
   ownerFirstName: string;
@@ -80,11 +160,15 @@ type FormState = {
   termsAccepted: boolean;
 };
 
+
+
 const emptyForm: FormState = {
   legalBusinessName: "",
   dbaName: "",
   businessEstablishedDate: "",
   taxpayerId: "",
+  fnsNumber: "",
+  annualRevenue: "",
   businessPhone: "",
   businessType: "",
   businessTypeOther: "",
@@ -101,7 +185,7 @@ const emptyForm: FormState = {
   businessZip: "",
   businessEmail: "",
   businessWebsite: "",
-  fnsNumber: "",
+  
 
   ownerLastName: "",
   ownerFirstName: "",
@@ -212,46 +296,6 @@ async function fileToDataUrlRaw(file: File | null): Promise<string | null> {
     r.readAsDataURL(file);
   });
 }
-
-function resizeSigCanvas(
-  sigRef: React.RefObject<SignatureCanvas>,
-  sigHasInkRef: React.MutableRefObject<boolean>,
-  opts?: { height?: number; force?: boolean }
-) {
-  const sig = sigRef.current;
-  if (!sig) return;
-
-  const force = !!opts?.force;
-
-  // ✅ HARD GUARD: if user has drawn ink, NEVER resize (unless forced)
-  if (!force && sigHasInkRef.current) return;
-
-  const canvas = sig.getCanvas();
-  const wrapper = canvas.parentElement as HTMLElement | null;
-  if (!wrapper) return;
-
-  const ratio = Math.max(window.devicePixelRatio || 1, 1);
-  const w = wrapper.clientWidth;
-  const h = opts?.height ?? 220;
-
-  // Preserve existing strokes (if any)
-  const data = sig.toData();
-
-  canvas.width = Math.floor(w * ratio);
-  canvas.height = Math.floor(h * ratio);
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-
-  const ctx = canvas.getContext("2d");
-  if (ctx) ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-
-  sig.clear();
-  if (data && data.length) sig.fromData(data);
-}
-
-
-
-
 function prefillCountGet(): number {
   const v = sessionStorage.getItem("prefillCount");
   const n = Number(v || "0");
@@ -279,12 +323,18 @@ export default function MerchantForm() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
+  // Stabilize callback to prevent SignaturePad re-renders
+  const handleSignatureChange = useCallback((hasSig: boolean) => {
+    setHasSignature(hasSig);
+  }, []);
+
+
   const [showEIN, setShowEIN] = useState(true);
   const [showSSN, setShowSSN] = useState(true);
+  const [showFNS, setShowFNS] = useState(true);
 
-  const sigRef = useRef<SignatureCanvas | null>(null);
+  const sigPadRef = useRef<SignaturePadRef | null>(null);
 
-  const sigHasInkRef = useRef(false);
 
 
   // modal state
@@ -298,49 +348,7 @@ export default function MerchantForm() {
     setModalOpen(true);
   }
 
- // Signature resize
-  useEffect(() => {
-    let resizeTimeout: number;
-    
-    const onResize = () => {
-      // Debounce resize events to avoid clearing during scroll
-      clearTimeout(resizeTimeout);
-      resizeTimeout = window.setTimeout(() => {
-        // Only resize if no signature exists yet
-        if (!sigHasInkRef.current) {
-          resizeSigCanvas(sigRef as any, sigHasInkRef);
-        }
-      }, 150);
-    };
-
-    // Only listen to window resize, not visualViewport (which fires on scroll)
-    window.addEventListener("resize", onResize);
-
-    // Initial resize
-    const t = setTimeout(() => resizeSigCanvas(sigRef as any, sigHasInkRef), 0);
-
-    return () => {
-      clearTimeout(t);
-      clearTimeout(resizeTimeout);
-      window.removeEventListener("resize", onResize);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (step === "additional") {
-      // Only force resize when first entering the step
-      const t = setTimeout(() => {
-        if (!sigHasInkRef.current) {
-          resizeSigCanvas(sigRef as any, sigHasInkRef, { force: true });
-        }
-      }, 100);
-      return () => clearTimeout(t);
-    }
-  }, [step]);
-
-
-
-  const all3DocsPresent = useMemo(() => !!(idFile && checkFile && w9File), [idFile, checkFile, w9File]);
+   const all3DocsPresent = useMemo(() => !!(idFile && checkFile && w9File), [idFile, checkFile, w9File]);
 
   function setVal<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((p) => ({ ...p, [k]: v }));
@@ -452,7 +460,7 @@ export default function MerchantForm() {
       });
 
       setStatus(consent ? "✅ Prefill complete." : "✅ Skipped OCR (consent not checked).");
-      showModal("Prefill", consent ? "Prefill completed, Please click on 'Continue'." : "Consent was not checked, so OCR was skipped.");
+      showModal("Success", consent ? "Prefill completed, Please click on 'Continue'." : "Consent was not checked, so OCR was skipped.");
     } catch (e: any) {
       console.error(e);
       setStatus("❌ Prefill failed.");
@@ -477,6 +485,8 @@ export default function MerchantForm() {
         "dbaName",
         "businessEstablishedDate",
         "taxpayerId",
+        "fnsNumber",
+        "annualRevenue",
         "businessPhone",
         "businessType",
         "physicalStreet",
@@ -487,12 +497,18 @@ export default function MerchantForm() {
       ];
       for (const k of required) {
         if (!String(form[k] || "").trim()) {
-          showModal("Missing required", `Missing required: ${String(k)}`);
+          const fieldLabel = FIELD_LABELS[k as string] || String(k);
+          showModal("Missing required", `${fieldLabel}`);
           return false;
         }
       }
+
       if (!validLenDigits(form.taxpayerId, 9)) {
         showModal("Invalid EIN", "EIN must be 9 digits.");
+        return false;
+      }
+        if (!validLenDigits(form.fnsNumber, 7)) {
+        showModal("Invalid FNS", "FNS must be 7 digits.");
         return false;
       }
       if (form.businessPhone && !validLenDigits(form.businessPhone, 10)) {
@@ -523,9 +539,10 @@ export default function MerchantForm() {
         "routingNumber",
         "accountNumber"
       ];
-      for (const k of required) {
+     for (const k of required) {
         if (!String(form[k] || "").trim()) {
-          showModal("Missing required", `Missing required: ${String(k)}`);
+          const fieldLabel = FIELD_LABELS[k as string] || String(k);
+          showModal("Missing required", `${fieldLabel}`);
           return false;
         }
       }
@@ -557,7 +574,7 @@ export default function MerchantForm() {
         showModal("Terms required", "You must accept Terms & Conditions.");
         return false;
       }
-      if (!sigRef.current || sigRef.current.isEmpty()) {
+      if (!sigPadRef.current || sigPadRef.current.isEmpty()) {
         showModal("Signature required", "Please sign in the signature box.");
         return false;
       }
@@ -578,7 +595,7 @@ export default function MerchantForm() {
       setBusy(true);
       setStatus("Submitting…");
 
-      const signatureDataUrl = sigRef.current?.toDataURL("image/png") || "";
+      const signatureDataUrl = sigPadRef.current?.toDataURL("image/png") || "";
       const finalForm = {
         ...form,
         signatureImageDataUrl: signatureDataUrl,
@@ -643,7 +660,7 @@ export default function MerchantForm() {
         <div className="logo-wrap">
           <img src="/logo.svg" alt="Halo" />
         </div>
-        <h1 className="h1">Merchant Application - bak</h1>
+        <h1 className="h1">Merchant Application</h1>
         <p className="sub">Upload all documents, optionally prefill (with consent), then submit.</p>
       </div>
 
@@ -764,6 +781,50 @@ export default function MerchantForm() {
                 </button>
               </div>
             </div>
+
+             <div className="row">
+              <div className="label">FNS NO. (IF YOU PROCESS EBT/FOODSTAMP)</div>
+              <div className="eyeWrap">
+                <input
+                  className="input eyeInput"
+                  type={showFNS ? "text" : "password"}
+                  inputMode="numeric"
+                  value={form.fnsNumber}
+                  onChange={(e) => setVal("fnsNumber", digitsOnly(e.target.value).slice(0, 7))}
+                  placeholder="#########"
+                />
+                <button type="button" className="eyeBtn" onClick={() => setShowFNS((s) => !s)}>
+                  {showFNS ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+       
+
+            <div className="row">
+              <div className="label">Annual Revenue (approx) *</div>
+              <div style={{ position: 'relative' }}>
+                <span style={{
+                  position: 'absolute',
+                  left: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#666',
+                  pointerEvents: 'none'
+                }}>
+                  $
+                </span>
+                <input 
+                  className="input" 
+                  inputMode="numeric"
+                  style={{ paddingLeft: '24px' }}
+                  value={form.annualRevenue.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} 
+                  onChange={(e) => setVal("annualRevenue", digitsOnly(e.target.value).slice(0, 15))} 
+                  placeholder="0"
+                />
+              </div>
+            </div>
+
 
             <div className="row">
               <div className="label">Business Phone *</div>
@@ -889,10 +950,41 @@ export default function MerchantForm() {
               <input className="input" value={form.ownerTitle} onChange={(e) => setVal("ownerTitle", e.target.value)} />
             </div>
 
-            <div className="row">
+            {/* <div className="row">
               <div className="label">Ownership % *</div>
               <input className="input" inputMode="numeric" value={form.ownerOwnershipPct} onChange={(e) => setVal("ownerOwnershipPct", digitsOnly(e.target.value).slice(0, 3))} />
+            </div> */}
+
+            <div className="row">
+              <div className="label">Ownership % *</div>
+              <div style={{ position: 'relative' }}>
+                <input 
+                  className="input" 
+                  inputMode="numeric"
+                  style={{ paddingRight: '32px' }}
+                  value={form.ownerOwnershipPct} 
+                  onChange={(e) => {
+                    const val = digitsOnly(e.target.value).slice(0, 3);
+                    const num = parseInt(val, 10);
+                    // Cap at 100
+                    setVal("ownerOwnershipPct", num > 100 ? "100" : val);
+                  }} 
+                  placeholder="0"
+                />
+                <span style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#666',
+                  pointerEvents: 'none'
+                }}>
+                  %
+                </span>
+              </div>
             </div>
+
+            
 
             <div className="row">
               <div className="label">DOB *</div>
@@ -998,35 +1090,37 @@ export default function MerchantForm() {
 
           <div className="sectionHeading">Additional Information</div>
           <div className="grid2">
-            <div className="row">
-              <div className="label">Terminal</div>
-              <input className="input" value={form.ccTerminal} onChange={(e) => setVal("ccTerminal", e.target.value)} />
-            </div>
+           
 
-            <div className="row">
+            {/* <div className="row">
+              <div className="label">Terminal: </div>
+              <input className="input" inputMode="numeric" value={form.ccTerminal} onChange={(e) => setVal("ccTerminal", e.target.value)} />
+            </div> */}
+
+            {/* <div className="row">
               <div className="label">Encryption</div>
               <select className="select" value={form.encryption} onChange={(e) => setVal("encryption", e.target.value)}>
                 <option value="">Select…</option>
                 <option value="WF 350">WF 350</option>
                 <option value="WF 351">WF 351</option>
               </select>
-            </div>
+            </div> */}
 
-            <div className="row">
+            {/* <div className="row">
               <div className="label">Gas Station POS</div>
               <select className="select" value={form.gasStationPos} onChange={(e) => setVal("gasStationPos", e.target.value)}>
                 <option value="">Select…</option>
                 <option value="petrotechPOS">petrotechPOS</option>
                 <option value="ruby">ruby</option>
               </select>
-            </div>
+            </div> */}
 
-            <div className="row">
+            {/* <div className="row">
               <div className="label">PRICING</div>
               <input className="input" value={form.pricing} onChange={(e) => setVal("pricing", e.target.value)} />
-            </div>
+            </div> */}
 
-            <div className="row">
+            {/* <div className="row">
               <div className="label">Installation Date</div>
               <input className="input" type="date" value={form.installationDate} onChange={(e) => setVal("installationDate", e.target.value)} />
             </div>
@@ -1039,15 +1133,15 @@ export default function MerchantForm() {
             <div className="row">
               <div className="label">Site ID #</div>
               <input className="input" value={form.siteId} onChange={(e) => setVal("siteId", e.target.value)} />
-            </div>
-          </div>
+            </div>*/}
+          </div> 
 
           <div className="row">
             <div className="label">Other Notes</div>
             <textarea className="textarea" value={form.otherNotes} onChange={(e) => setVal("otherNotes", e.target.value)} />
           </div>
 
-          <div className="sectionHeading">Signature & Terms</div>
+          {/* <div className="sectionHeading">Signature & Terms</div> */}
 
 	 <div className="grid2">
             <div className="row">
@@ -1060,53 +1154,31 @@ export default function MerchantForm() {
             </div>
           </div>
 
-          <div className="row">
-            <div className="label">Signature (required)</div>
-            <div className="sigBox">
-              <SignatureCanvas
-                ref={sigRef}
-                penColor="black"
-                backgroundColor="white"
-                onBegin={() => {
-                  // user started drawing
-                  sigHasInkRef.current = true;
-                }}
-                onEnd={() => {
-                  // user finished a stroke
-                  sigHasInkRef.current = true;
-                }}
-                canvasProps={{
-                  style: { width: "100%", height: "220px", borderRadius: "12px" }
-                }}
-              />
+        <div className="row">
+          <div className="label">Signature (required)</div>
+          
+          <SignaturePad
+            ref={sigPadRef}
+            onSignatureChange={handleSignatureChange}
+          />
 
-
-
-
-            </div>
-            <div className="btnRow" style={{ marginTop: 8 }}>
-              <button
+          <div className="btnRow" style={{ marginTop: 8 }}>
+            <button
               className="btn btnGhost"
               type="button"
-              onClick={() => {
-                sigRef.current?.clear();
-                sigHasInkRef.current = false; // ✅ allow resize again
-                setTimeout(() => resizeSigCanvas(sigRef as any, sigHasInkRef, { force: true }), 0);
-              }}
+              onClick={() => sigPadRef.current?.clear()}
             >
               Clear Signature
             </button>
-
-
-
-            </div>
           </div>
+        </div>
+
 
           
 
           <div className="row">
             <label className="notice checkboxLine">
-              <input type="checkbox" checked={form.termsAccepted} onChange={(e) => setVal("termsAccepted", e.target.checked)} /> I agree to Terms & Conditions *
+              <input type="checkbox" checked={form.termsAccepted} onChange={(e) => setVal("termsAccepted", e.target.checked)} /> I agree to <a href="https://halopayments.com/privacy-terms" target="_blank" rel="noopener noreferrer">Terms & Conditions</a>*
             </label>
           </div>
 

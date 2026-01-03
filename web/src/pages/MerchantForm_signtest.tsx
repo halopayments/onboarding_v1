@@ -1,11 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import SignatureCanvas from "react-signature-canvas";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "../components/Modal";
+import SignaturePad, { SignaturePadRef } from "../components/SignaturePad";
 
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-
 
 type StepKey = "upload" | "business" | "principal" | "additional";
 
@@ -142,8 +141,6 @@ function digitsOnly(s: string) {
   return String(s || "").replace(/\D/g, "");
 }
 
-// REMOVED: resizeSigCanvas function entirely to prevent any accidental calls
-
 export default function MerchantForm() {
   // TEMP: Start directly at step 4 for testing
   const [stepIndex, setStepIndex] = useState(3);
@@ -154,9 +151,12 @@ export default function MerchantForm() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
-  const sigRef = useRef<SignatureCanvas | null>(null);
-  const sigHasInkRef = useRef(false);
-  const signatureDataRef = useRef<any[]>([]); // Store signature data
+  const sigPadRef = useRef<SignaturePadRef | null>(null);
+
+  // Stabilize callback with useCallback to prevent SignaturePad re-renders
+  const handleSignatureChange = useCallback((hasSig: boolean) => {
+    setHasSignature(hasSig);
+  }, []);
 
   // modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -168,34 +168,6 @@ export default function MerchantForm() {
     setModalMsg(msg);
     setModalOpen(true);
   }
-
-  // PERMANENT FIX: Only resize on initial mount, NEVER resize again
-  useEffect(() => {
-    if (step === "additional" && sigRef.current) {
-      // Do ONE resize when the signature step first loads
-      const t = setTimeout(() => {
-        const sig = sigRef.current;
-        if (!sig) return;
-        
-        const canvas = sig.getCanvas();
-        const wrapper = canvas.parentElement as HTMLElement | null;
-        if (!wrapper) return;
-
-        const ratio = Math.max(window.devicePixelRatio || 1, 1);
-        const w = wrapper.clientWidth;
-        const h = 220;
-
-        canvas.width = Math.floor(w * ratio);
-        canvas.height = Math.floor(h * ratio);
-        canvas.style.width = `${w}px`;
-        canvas.style.height = `${h}px`;
-
-        const ctx = canvas.getContext("2d");
-        if (ctx) ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      }, 100);
-      return () => clearTimeout(t);
-    }
-  }, [step]);
 
   function setVal<K extends keyof FormState>(k: K, v: FormState[K]) {
     setForm((p) => ({ ...p, [k]: v }));
@@ -215,7 +187,7 @@ export default function MerchantForm() {
         showModal("Terms required", "You must accept Terms & Conditions.");
         return;
       }
-      if (!sigRef.current || sigRef.current.isEmpty()) {
+      if (!sigPadRef.current || sigPadRef.current.isEmpty()) {
         showModal("Signature required", "Please sign in the signature box.");
         return;
       }
@@ -223,7 +195,7 @@ export default function MerchantForm() {
       setBusy(true);
       setStatus("Submitting…");
 
-      const signatureDataUrl = sigRef.current?.toDataURL("image/png") || "";
+      const signatureDataUrl = sigPadRef.current?.toDataURL("image/png") || "";
       const finalForm = {
         ...form,
         signatureImageDataUrl: signatureDataUrl,
@@ -280,99 +252,42 @@ export default function MerchantForm() {
       <div className="card">
         <div className="cardTitle">4) Additional + Signature (TEST MODE)</div>
 
-        <div className="sectionHeading">Additional Information</div>
         <div className="grid2">
           <div className="row">
-            <div className="label">Terminal</div>
-            <input className="input" value={form.ccTerminal} onChange={(e) => setVal("ccTerminal", e.target.value)} />
-          </div>
-
-          <div className="row">
-            <div className="label">Encryption</div>
-            <select className="select" value={form.encryption} onChange={(e) => setVal("encryption", e.target.value)}>
-              <option value="">Select…</option>
-              <option value="WF 350">WF 350</option>
-              <option value="WF 351">WF 351</option>
-            </select>
-          </div>
-
-          <div className="row">
-            <div className="label">Gas Station POS</div>
-            <select className="select" value={form.gasStationPos} onChange={(e) => setVal("gasStationPos", e.target.value)}>
-              <option value="">Select…</option>
-              <option value="petrotechPOS">petrotechPOS</option>
-              <option value="ruby">ruby</option>
-            </select>
-          </div>
-
-          <div className="row">
-            <div className="label">PRICING</div>
-            <input className="input" value={form.pricing} onChange={(e) => setVal("pricing", e.target.value)} />
-          </div>
-
-          <div className="row">
-            <div className="label">Installation Date</div>
-            <input className="input" type="date" value={form.installationDate} onChange={(e) => setVal("installationDate", e.target.value)} />
-          </div>
-
-          <div className="row">
-            <div className="label">Other Fleet Cards</div>
-            <input className="input" value={form.otherFleetCards} onChange={(e) => setVal("otherFleetCards", e.target.value)} />
-          </div>
-
-          <div className="row">
-            <div className="label">Site ID #</div>
-            <input className="input" value={form.siteId} onChange={(e) => setVal("siteId", e.target.value)} />
+            <div className="label">FNS NO. (IF YOU PROCESS EBT/FOODSTAMP):</div>
+            <input 
+              className="input" 
+              inputMode="numeric" 
+              value={form.ccTerminal} 
+              onChange={(e) => setVal("ccTerminal", e.target.value)} 
+            />
           </div>
         </div>
 
         <div className="row">
           <div className="label">Other Notes</div>
-          <textarea className="textarea" value={form.otherNotes} onChange={(e) => setVal("otherNotes", e.target.value)} />
+          <textarea 
+            className="textarea" 
+            value={form.otherNotes} 
+            onChange={(e) => setVal("otherNotes", e.target.value)} 
+          />
         </div>
 
         <div className="sectionHeading">Signature & Terms</div>
 
         <div className="row">
           <div className="label">Signature (required) - Try scrolling after signing!</div>
-          <div 
-            className="sigBox"
-            style={{
-              touchAction: 'none', // Prevent scroll on signature area
-              position: 'relative'
-            }}
-          >
-            <SignatureCanvas
-              ref={sigRef}
-              penColor="black"
-              backgroundColor="white"
-              onBegin={() => {
-                sigHasInkRef.current = true;
-                setHasSignature(true);
-              }}
-              onEnd={() => {
-                sigHasInkRef.current = true;
-                setHasSignature(true);
-              }}
-              canvasProps={{
-                style: { 
-                  width: "100%", 
-                  height: "220px", 
-                  borderRadius: "12px",
-                  touchAction: 'none' // Prevent scroll interference
-                }
-              }}
-            />
-          </div>
+          
+          <SignaturePad
+            ref={sigPadRef}
+            onSignatureChange={handleSignatureChange}
+          />
+
           <div className="btnRow" style={{ marginTop: 8 }}>
             <button
               className="btn btnGhost"
               type="button"
-              onClick={() => {
-                sigRef.current?.clear();
-                sigHasInkRef.current = false;
-                setHasSignature(false);
-              }}
+              onClick={() => sigPadRef.current?.clear()}
             >
               Clear Signature
             </button>
@@ -382,22 +297,39 @@ export default function MerchantForm() {
         <div className="grid2">
           <div className="row">
             <div className="label">Signer Name *</div>
-            <input className="input" value={form.signatureName} onChange={(e) => setVal("signatureName", e.target.value)} />
+            <input 
+              className="input" 
+              value={form.signatureName} 
+              onChange={(e) => setVal("signatureName", e.target.value)} 
+            />
           </div>
           <div className="row">
             <div className="label">Signature Date *</div>
-            <input className="input" type="date" value={form.signatureDate} onChange={(e) => setVal("signatureDate", e.target.value)} />
+            <input 
+              className="input" 
+              type="date" 
+              value={form.signatureDate} 
+              onChange={(e) => setVal("signatureDate", e.target.value)} 
+            />
           </div>
         </div>
 
         <div className="row">
           <label className="notice checkboxLine">
-            <input type="checkbox" checked={form.termsAccepted} onChange={(e) => setVal("termsAccepted", e.target.checked)} /> I agree to Terms & Conditions *
+            <input 
+              type="checkbox" 
+              checked={form.termsAccepted} 
+              onChange={(e) => setVal("termsAccepted", e.target.checked)} 
+            /> I agree to Terms & Conditions *
           </label>
         </div>
 
         <div className="btnRow">
-          <button className="btn btnPrimary" disabled={busy} onClick={handleSubmit}>
+          <button 
+            className="btn btnPrimary" 
+            disabled={busy} 
+            onClick={handleSubmit}
+          >
             {busy ? "Submitting…" : "Submit (Test)"}
           </button>
         </div>
@@ -409,8 +341,8 @@ export default function MerchantForm() {
           <ol style={{ marginTop: 8, paddingLeft: 20 }}>
             <li>Draw your signature in the box above</li>
             <li>Scroll up and down on the page</li>
-            <li>Check if your signature remains intact</li>
-            <li>If it clears, we need more fixes</li>
+            <li>Type in the "Signer Name" field</li>
+            <li>Your signature should now remain intact!</li>
           </ol>
         </div>
       </div>

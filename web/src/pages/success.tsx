@@ -149,7 +149,7 @@ export default function Success() {
         </div>
 
         <div className="notice subtle" style={{ marginTop: 12 }}>
-          Redirecting to halo.com in <b>{Math.max(secondsLeft, 0)}</b> seconds
+          Redirecting to halopayments.com in <b>{Math.max(secondsLeft, 0)}</b> seconds
         </div>
       </div>
     </div>

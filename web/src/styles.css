@@ -403,7 +403,7 @@ body {
 .modalTitle {
   font-size: 16px;
   font-weight: 700;
-  color: #0f172a;
+  color: #f50b0b;
 }
 
 .modalClose {
@@ -411,7 +411,7 @@ body {
   background: transparent;
   cursor: pointer;
   font-size: 16px;
-  color: #334155;
+  color: #813b47;
   padding: 6px 8px;
   border-radius: 10px;
 }

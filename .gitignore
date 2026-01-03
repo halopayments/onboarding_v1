@@ -36,3 +36,7 @@ out/
 uploads/
 
 docs/
+
+server/app-counters.json
+web/src/pages/MerchantForm_signtest.tsx
+**/*.bak.*
